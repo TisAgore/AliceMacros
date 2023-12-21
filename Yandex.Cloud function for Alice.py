@@ -82,17 +82,15 @@ BUTTONS_NAMES = ["создать макрос", "использовать мак
 
 def check_user_message(func):
     global BUCKET_NAME, s3
-    def wrapper(original_utterance, USER_ID, session_state):
+    def wrapper(original_utterance, USER_ID):
         macros_name = original_utterance.lower()
         macros = s3.list_objects(Bucket=BUCKET_NAME, Prefix=USER_ID+'/'+macros_name+'.txt')
         if 'Contents' in macros:
-            text, session_state['user_action'], session_state['user_links'], buttons_status = func(macros_name, USER_ID, session_state)
+            text, buttons_status = func(macros_name, USER_ID)
         else:
             text = 'Такого макроса не существует'
-            session_state['user_action'] = ''
-            session_state['user_links'] = 'false'
             buttons_status = True
-        return text, session_state['user_action'], session_state['user_links'], buttons_status
+        return text, buttons_status
     return wrapper
 
 def create_macros(original_utterance, USER_ID, session_state, user_links):
@@ -125,16 +123,14 @@ def create_macros(original_utterance, USER_ID, session_state, user_links):
     return text, session_state['user_action'], session_state['user_links'], buttons_status
 
 @check_user_message
-def change_macros_links_false(macros_name, USER_ID, session_state):
+def change_macros_links_false(macros_name, USER_ID):
     global BUCKET_NAME, s3
     macros = s3.get_object(Bucket=BUCKET_NAME, Key=USER_ID+'/'+macros_name+'.txt')
     macros_content = macros['Body'].read().decode('utf-8')
     s3.put_object(Bucket=BUCKET_NAME, Key=USER_ID+'/'+macros_name+'.txt', Body='')
     text = 'Введите все ссылки, абсолютные пути нужных вам файлов или команды к операционной системе в формате, например:\nСсылка\n"Путь"\nСсылка\nСсылка\nКоманда\n\nВот как этот макрос выглядит сейчас:\n' + macros_content
-    session_state['user_action'] = 'Change'
-    session_state['user_links'] = 'true'
     buttons_status = False
-    return text, session_state['user_action'], session_state['user_links'], buttons_status
+    return text, buttons_status
 
 def change_macros_links_true(original_utterance, USER_ID):
     global BUCKET_NAME, s3
@@ -151,7 +147,7 @@ def change_macros_links_true(original_utterance, USER_ID):
     return text
 
 @check_user_message
-def use_macros(macros_name, USER_ID, session_state):
+def use_macros(macros_name, USER_ID):
     global BUCKET_NAME, s3
     macros = s3.get_object(Bucket=BUCKET_NAME, Key=USER_ID+'/'+macros_name+'.txt')
     macros_content = str(macros['Body'].read().decode('utf-8'))
@@ -161,32 +157,26 @@ def use_macros(macros_name, USER_ID, session_state):
                     StorageClass='STANDARD',
                     ContentEncoding='UTF-8')
     text = "Что дальше? Если забыли свой USER_ID, введите любое сообщение"
-    session_state['user_action'] = ''
-    session_state['user_links'] = 'false'
     buttons_status = True
-    return text, session_state['user_action'], session_state['user_links'], buttons_status
+    return text, buttons_status
 
 @check_user_message
-def delete_macros(macros_name, USER_ID, session_state):
+def delete_macros(macros_name, USER_ID):
     global BUCKET_NAME, s3
     deleted_object = [{'Key': USER_ID+'/'+macros_name+'.txt'}]
     s3.delete_objects(Bucket=BUCKET_NAME, Delete={'Objects': deleted_object})
     text = "Макрос успешно удалён\nЧто дальше? Если забыли свой USER_ID, введите любое сообщение"
-    session_state['user_action'] = ''
-    session_state['user_links'] = 'false'
     buttons_status = True
-    return text, session_state['user_action'], session_state['user_links'], buttons_status
+    return text, buttons_status
 
 @check_user_message
-def view_macros(macros_name, USER_ID, session_state):
+def view_macros(macros_name, USER_ID):
     global BUCKET_NAME, s3
     macros = s3.get_object(Bucket=BUCKET_NAME, Key=USER_ID+'/'+macros_name+'.txt')
     macros_content = macros['Body'].read().decode('utf-8')
     text = 'Вот как этот макрос выглядит сейчас:\n' + macros_content
-    session_state['user_action'] = ''
-    session_state['user_links'] = 'false'
     buttons_status = True
-    return text, session_state['user_action'], session_state['user_links'], buttons_status
+    return text, buttons_status
 
 def pressed_button(original_utterance, user_folder):
     utterances_and_contents = {'создать макрос': [
@@ -255,19 +245,22 @@ async def handler(event, context):
             text, session_state['user_action'], session_state['user_links'], buttons_status = create_macros(event['request']['original_utterance'], USER_ID, session_state, event['state']['session']['user_links'])
         
         if event['state']['session']['user_action'] == 'Use':
-            text, session_state['user_action'], session_state['user_links'], buttons_status = use_macros(event['request']['original_utterance'], USER_ID, session_state)
+            text, buttons_status = use_macros(event['request']['original_utterance'], USER_ID)
 
         if event['state']['session']['user_action'] == 'Change':
             if event['state']['session']['user_links'] == 'false':
-                text, session_state['user_action'], session_state['user_links'], buttons_status = change_macros_links_false(event['request']['original_utterance'], USER_ID, session_state)
+                text, buttons_status = change_macros_links_false(event['request']['original_utterance'], USER_ID)
+                if text != 'Такого макроса не существует':
+                    session_state['user_action'] = 'Change'
+                    session_state['user_links'] = 'true'
             elif event['state']['session']['user_links'] == 'true':
                 text = change_macros_links_true(event['request']['original_utterance'], USER_ID)
 
         if event['state']['session']['user_action'] == 'Delete':
-            text, session_state['user_action'], session_state['user_links'], buttons_status = delete_macros(event['request']['original_utterance'], USER_ID, session_state)
+            text, buttons_status = delete_macros(event['request']['original_utterance'], USER_ID)
 
         if event['state']['session']['user_action'] == 'View':
-            text, session_state['user_action'], session_state['user_links'], buttons_status = view_macros(event['request']['original_utterance'], USER_ID, session_state)
+            text, buttons_status = view_macros(event['request']['original_utterance'], USER_ID)
 
     buttons = BUTTONS_ENABLED[buttons_status]
 
